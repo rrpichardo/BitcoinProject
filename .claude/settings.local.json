@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -E \"\\\\.py$|\\\\.ipynb$|\\\\.yaml$|\\\\.yml$|Dockerfile\")",
+      "Bash(python3 scripts/../scripts/train.py --config config.yaml)",
+      "Bash(cp \"/Users/ricopichardo/Library/Mobile Documents/com~apple~CloudDocs/CMU/CMU/Classes/Mini 4/Operationalizing AI/BitcoinProject/scripts/train.py\" \"/Users/ricopichardo/Documents/Bitcoin/scripts/train.py\")",
+      "Bash(python3 scripts/train.py --config config.yaml)",
+      "Bash(pip3 install:*)",
+      "Bash(gh auth:*)"
+    ]
+  }
+}

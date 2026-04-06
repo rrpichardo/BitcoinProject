@@ -1,0 +1,22 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Data (raw ticks can be large)
+data/raw/
+data/processed/
+
+# MLflow local store
+mlruns/
+
+# Notebooks checkpoints
+notebooks/.ipynb_checkpoints/
+
+# OS
+.DS_Store

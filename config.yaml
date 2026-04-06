@@ -1,0 +1,39 @@
+# Bitcoin Volatility Detection Pipeline — Central Configuration
+
+data:
+  raw_dir: data/raw
+  processed_dir: data/processed
+  features_file: data/processed/features.parquet
+  features_test_file: data/processed/features_test.parquet
+
+kafka:
+  bootstrap_servers: "localhost:9092"
+  topic_raw: ticks.raw
+  topic_features: ticks.features
+  group_id: volatility-pipeline
+
+websocket:
+  pair: BTC-USD
+  ingest_minutes: 15
+
+features:
+  window_seconds: 60        # rolling window for vol/return calc
+  vol_threshold: 0.000046   # P90 of observed future_vol_60s — ~10% spike rate, σ ≈ $2.75 on $60k BTC
+  label_lookahead: 1        # bars ahead to define spike label (1 × window_seconds = 60s horizon)
+
+model:
+  type: logistic
+  test_size: 0.2
+  random_state: 42
+  scale_pos_weight: 5       # class imbalance weight
+
+mlflow:
+  tracking_uri: "sqlite:///mlruns/mlflow.db"
+  experiment_name: btc-volatility
+
+evidently:
+  report_dir: reports/evidently
+  reference_size: 1000      # rows used as reference dataset
+
+docker:
+  compose_file: docker/compose.yaml
