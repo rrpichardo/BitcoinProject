@@ -39,6 +39,48 @@ All features are computed per tick from a lookback window of `window_seconds = 6
 
 ---
 
+## Feature Selection (Ablation Study)
+
+Four feature variants were evaluated using identical LR hyperparameters (C=0.1, balanced, lbfgs).
+Threshold selected on validation best-F1; winner picked on validation PR-AUC.
+
+| Variant | Features | val PR-AUC | Outcome |
+|---------|----------|-----------|---------|
+| A | 6 baseline features | 0.4990 | Control |
+| B | A + `spread_mean_60s` | **0.5182** | **Winner** — liquidity signal improves performance |
+| C | B + `price_range_60s` | 0.5033 | `price_range_60s` adds noise, slight drop from B |
+| D | C − `spread_abs` − `n_ticks_60s` | 0.5033 | Identical to C; confirms dropped features are redundant |
+
+### Correlation analysis results
+
+Highly correlated pairs (|r| > 0.85) informed the ablation design:
+
+| Pair | r | Resolution |
+|------|---|------------|
+| `n_ticks_60s` ↔ `trade_intensity_60s` | ~1.00 | Linear rescale (`intensity = n_ticks / 60`). Both kept in Variant B since LR handles collinearity; confirmed redundant in D vs C comparison. |
+| `spread_abs` ↔ `spread_bps` | ~0.99 | Same signal, different scale. `spread_bps` preferred (unit-free). |
+| `spread_abs` ↔ `spread_mean_60s` | high | Instantaneous vs smoothed. `spread_mean_60s` preferred (less noisy, better val PR-AUC). |
+
+### Candidates tested but not included in final model
+
+| Feature | Tested in | Result | Rationale for exclusion |
+|---------|-----------|--------|------------------------|
+| `price_range_60s` | Variants C, D | No lift over B (val PR-AUC 0.5033 vs 0.5182) | Adds dimensionality without improving discrimination |
+
+### Final model feature set (Variant B — 7 features)
+
+| Feature | Role |
+|---------|------|
+| `log_return` | Instantaneous price momentum |
+| `spread_bps` | Current liquidity (unit-free) |
+| `vol_60s` | Rolling volatility (strongest predictor) |
+| `mean_return_60s` | Rolling drift direction |
+| `trade_intensity_60s` | Market activity rate |
+| `n_ticks_60s` | Raw tick count (correlated with intensity but retained) |
+| `spread_mean_60s` | Smoothed liquidity signal over 60s window |
+
+---
+
 ## Parquet schema (`data/processed/features.parquet`)
 
 | Column                | Type      | Description                              |

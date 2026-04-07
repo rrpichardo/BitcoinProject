@@ -21,6 +21,12 @@ services:
       CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
     volumes:
       - kafka-data:/var/lib/kafka/data
+    # Cap resource usage to prevent runaway memory/CPU consumption
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
     healthcheck:
       test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
       interval: 10s
@@ -54,6 +60,12 @@ services:
       KAFKA_BOOTSTRAP: kafka:29092
     volumes:
       - ../data/raw:/app/data/raw
+    # Cap resource usage for the ingestor container
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
     restart: on-failure
 
   mlflow:
@@ -63,12 +75,18 @@ services:
       - "5001:5000"
     command: >
       mlflow server
-      --backend-store-uri sqlite:////mlruns/mlflow.db
+      --backend-store-uri sqlite:////mlruns/mlflow_ui.db
       --default-artifact-root /mlruns/artifacts
       --host 0.0.0.0
       --port 5000
     volumes:
       - ../mlruns:/mlruns
+    # Cap resource usage for the MLflow server
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
 
 volumes:
   kafka-data:

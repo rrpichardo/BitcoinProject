@@ -130,7 +130,7 @@ Evidently HTML reports: `reports/evidently/feature_drift.html`, `reports/evident
 - **Limited training window.** The model has seen only a few days of market data. Performance during extreme volatility regimes (e.g., flash crashes, macro events) is unknown.
 - **Single pair.** Trained on BTC-USD only and not validated on other pairs.
 - **No order-book depth.** `ob_imbalance` is unavailable from the Coinbase basic ticker feed; adding bid/ask sizes could improve recall.
-- **Temporal non-stationarity.** Spike rate varies across splits (10.4%–27.8%), reflecting genuine regime shifts. The val-to-test performance gap is driven by the test window landing on a quiet market period, not overfitting.
+- **Temporal non-stationarity.** Spike rate varies 3x across splits (7.6%–22.9%), reflecting genuine regime shifts. The val-to-test performance gap is driven by the test window landing on a quiet market period, not overfitting.
 
 ---
 
