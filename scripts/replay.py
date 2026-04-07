@@ -338,19 +338,11 @@ def main():
             emitted += 1
             drained += 1
 
-    sink._flush()
-    sink._writer.close()
+    sink.close()
 
     log.info(
         "Done. %d ticks processed → %d rows emitted (%d from drain) → %s",
         pending_count, emitted, drained, out_path,
     )
-
-    # Quick sanity read
-    pf = pq.read_table(str(out_path))
-    log.info("Parquet schema: %s", pf.schema)
-    log.info("Row count: %d", len(pf))
-
-
 if __name__ == "__main__":
     main()
