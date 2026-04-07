@@ -304,7 +304,7 @@ def main():
 
     cfg           = load_config(args.config)
     window_sec    = float(cfg["features"]["window_seconds"])
-    horizon_sec   = float(cfg["features"]["label_lookahead"]) * window_sec
+    horizon_sec   = float(cfg["features"]["label_horizon_sec"])
     vol_threshold = float(cfg["features"]["vol_threshold"])
     out_path      = Path(args.out or cfg["data"]["features_file"])
 

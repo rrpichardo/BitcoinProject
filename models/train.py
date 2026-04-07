@@ -21,7 +21,9 @@ Usage
 """
 
 import argparse
+import hashlib
 import json
+import logging
 import pickle
 import sys
 import warnings
@@ -43,7 +45,9 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 from sklearn.exceptions import ConvergenceWarning
-warnings.filterwarnings("ignore", category=ConvergenceWarning)
+# Surface convergence issues as logged warnings instead of silencing them
+logging.captureWarnings(True)
+warnings.filterwarnings("default", category=ConvergenceWarning)
 
 ROOT      = Path(__file__).parent.parent
 ARTIFACTS = ROOT / "models" / "artifacts"
@@ -163,7 +167,7 @@ def run_zscore(train, val, test, experiment_id: str, zscore_threshold: float = 2
         pred_df["y_true"] = results["test"]["y_true"]
         pred_df["y_prob"] = results["test"]["y_prob"]
         pred_df["y_pred"] = results["test"]["y_pred"]
-        tmp = Path("/tmp/zscore_predictions.csv")
+        tmp = ARTIFACTS / "zscore_predictions.csv"
         pred_df.to_csv(tmp, index=False)
         mlflow.log_artifact(str(tmp), artifact_path="predictions")
 
@@ -246,12 +250,20 @@ def run_logistic(train, val, test, experiment_id: str, tau: float = None):
         # Log model to MLflow
         mlflow.sklearn.log_model(pipe, artifact_path="model")
 
-        # Save pickle to models/artifacts/
+        # Save pickle to models/artifacts/ with SHA-256 checksum for integrity verification
         ARTIFACTS.mkdir(parents=True, exist_ok=True)
         pkl_path = ARTIFACTS / "lr_pipeline.pkl"
         with open(pkl_path, "wb") as f:
             pickle.dump({"pipeline": pipe, "feature_cols": FEATURE_COLS, "tau": tau}, f)
+        # Write checksum so infer.py can verify the artifact before deserializing
+        sha_path = pkl_path.with_suffix(".sha256")
+        h = hashlib.sha256()
+        with open(pkl_path, "rb") as f:
+            for chunk in iter(lambda: f.read(8192), b""):
+                h.update(chunk)
+        sha_path.write_text(f"{h.hexdigest()}  {pkl_path.name}\n")
         mlflow.log_artifact(str(pkl_path), artifact_path="artifacts")
+        mlflow.log_artifact(str(sha_path), artifact_path="artifacts")
 
         # Save human-readable metadata alongside the pickle
         metadata = {
@@ -277,7 +289,7 @@ def run_logistic(train, val, test, experiment_id: str, tau: float = None):
         pred_df["y_true"] = y_te
         pred_df["y_prob"] = pipe.predict_proba(X_te)[:, 1]
         pred_df["y_pred"] = (pred_df["y_prob"] >= tau).astype(int)
-        tmp = Path("/tmp/lr_predictions.csv")
+        tmp = ARTIFACTS / "lr_predictions.csv"
         pred_df.to_csv(tmp, index=False)
         mlflow.log_artifact(str(tmp), artifact_path="predictions")
 

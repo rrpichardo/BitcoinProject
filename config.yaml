@@ -19,7 +19,7 @@ websocket:
 features:
   window_seconds: 60        # rolling window for vol/return calc
   vol_threshold: 0.000048   # P85 of observed future_vol_60s — ~15% spike rate, σ ≈ $2.88 on $60k BTC
-  label_lookahead: 1        # bars ahead to define spike label (1 × window_seconds = 60s horizon)
+  label_horizon_sec: 60     # forward-looking window in seconds for vol_spike label
 
 model:
   type: logistic

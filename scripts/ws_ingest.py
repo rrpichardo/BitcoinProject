@@ -284,11 +284,21 @@ async def ticker_task(
                             ts = msg.get("timestamp", "")
                             for event in msg.get("events", []):
                                 for tick in event.get("tickers", []):
+                                    # Validate required fields before producing — reject nulls early
+                                    # so poisoned ticks never reach the featurizer downstream
+                                    price    = tick.get("price")
+                                    best_bid = tick.get("best_bid")
+                                    best_ask = tick.get("best_ask")
+                                    if price is None or best_bid is None or best_ask is None or not ts:
+                                        log.warning("[ticker] skipped tick with null field(s): price=%s bid=%s ask=%s ts=%s",
+                                                    price, best_bid, best_ask, ts)
+                                        continue
+
                                     payload = {
                                         "product_id":  tick.get("product_id", pair),
-                                        "price":        tick.get("price"),
-                                        "best_bid":     tick.get("best_bid"),
-                                        "best_ask":     tick.get("best_ask"),
+                                        "price":        price,
+                                        "best_bid":     best_bid,
+                                        "best_ask":     best_ask,
                                         "volume_24_h":  tick.get("volume_24_h"),
                                         "timestamp":    ts,
                                     }

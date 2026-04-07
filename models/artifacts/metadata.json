@@ -8,14 +8,14 @@
     "n_ticks_60s",
     "spread_mean_60s"
   ],
-  "tau": 0.7026476958195016,
-  "train_rows": 364705,
-  "val_rows": 121568,
-  "test_rows": 121569,
-  "val_pr_auc": 0.3719,
-  "val_f1_at_tau": 0.4589,
-  "val_spike_rate": 0.1469,
-  "test_pr_auc": 0.1444,
-  "test_f1_at_tau": 0.1309,
-  "test_spike_rate": 0.0709
+  "tau": 0.7015111414990671,
+  "train_rows": 368311,
+  "val_rows": 122771,
+  "test_rows": 122771,
+  "val_pr_auc": 0.358,
+  "val_f1_at_tau": 0.4463,
+  "val_spike_rate": 0.1414,
+  "test_pr_auc": 0.1459,
+  "test_f1_at_tau": 0.1359,
+  "test_spike_rate": 0.0703
 }

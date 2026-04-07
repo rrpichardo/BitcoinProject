@@ -44,7 +44,8 @@ VOL_THRESHOLD = 0.000041
 def _ts(offset_sec: float) -> str:
     """Return an ISO-8601 timestamp offset_sec after a fixed epoch."""
     base = datetime(2026, 4, 5, 0, 0, 0, tzinfo=timezone.utc).timestamp()
-    t    = datetime.utcfromtimestamp(base + offset_sec)
+    # Use timezone-aware constructor — utcfromtimestamp is deprecated in 3.12+
+    t    = datetime.fromtimestamp(base + offset_sec, tz=timezone.utc)
     return t.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
 
 

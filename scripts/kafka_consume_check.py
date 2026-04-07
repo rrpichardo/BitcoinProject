@@ -22,7 +22,7 @@ import signal
 import sys
 import time
 import uuid
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 from datetime import datetime, timezone
 
 from confluent_kafka import Consumer, KafkaError
@@ -85,12 +85,17 @@ def validate(msg: dict) -> list[str]:
 # Stats
 # ---------------------------------------------------------------------------
 
+# Cap the dedup window so memory stays bounded for long-running consumers
+MAX_DEDUP_KEYS = 100_000
+
+
 class Stats:
     def __init__(self):
         self.total = 0
         self.invalid = 0
         self.error_counts: dict[str, int] = defaultdict(int)
-        self.seen_keys: set = set()
+        # OrderedDict used as a bounded LRU set — oldest entries evicted first
+        self.seen_keys: OrderedDict = OrderedDict()
         self.duplicates = 0
         self.start = time.monotonic()
 
@@ -101,7 +106,10 @@ class Stats:
             self.duplicates += 1
             errors = errors + [f"duplicate key {dedup_key}"]
         else:
-            self.seen_keys.add(dedup_key)
+            self.seen_keys[dedup_key] = None
+            # Evict oldest entries when the window exceeds the cap
+            while len(self.seen_keys) > MAX_DEDUP_KEYS:
+                self.seen_keys.popitem(last=False)
 
         if errors:
             self.invalid += 1

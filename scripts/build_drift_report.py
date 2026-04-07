@@ -18,57 +18,64 @@ FEATURE_COLS = [
 ]
 TARGET = "vol_spike"
 
-df = pd.read_parquet("data/processed/features.parquet").sort_values("timestamp").reset_index(drop=True)
-df = df.dropna(subset=FEATURE_COLS + [TARGET])
 
-ts   = pd.to_datetime(df["timestamp"])
-tmin, tmax = ts.min(), ts.max()
-span = tmax - tmin
+def main():
+    # Load and clean the features dataset
+    df = pd.read_parquet("data/processed/features.parquet").sort_values("timestamp").reset_index(drop=True)
+    df = df.dropna(subset=FEATURE_COLS + [TARGET])
 
-train = df[ts <  (tmin + span * 0.60)][FEATURE_COLS + [TARGET]]
-test  = df[ts >= (tmin + span * 0.80)][FEATURE_COLS + [TARGET]]
+    # Compute time-based train/test boundaries
+    ts   = pd.to_datetime(df["timestamp"])
+    tmin, tmax = ts.min(), ts.max()
+    span = tmax - tmin
 
-col_map = ColumnMapping(
-    target=TARGET,
-    prediction=None,
-    numerical_features=FEATURE_COLS,
-)
+    train = df[ts <  (tmin + span * 0.60)][FEATURE_COLS + [TARGET]]
+    test  = df[ts >= (tmin + span * 0.80)][FEATURE_COLS + [TARGET]]
 
-report = Report(metrics=[DataDriftPreset(), TargetDriftPreset()])
-report.run(reference_data=train, current_data=test, column_mapping=col_map)
+    # Configure column mapping so Evidently treats vol_spike as target, not feature
+    col_map = ColumnMapping(
+        target=TARGET,
+        prediction=None,
+        numerical_features=FEATURE_COLS,
+    )
 
-# --- parse feature drift (target excluded) ---
-result = report.as_dict()
-rows = []
-dataset_drift = False
-n_drifted = n_total = 0
-for m in result["metrics"]:
-    if m["metric"] == "DataDriftTable":
-        for col, info in m["result"]["drift_by_columns"].items():
-            rows.append({
-                "feature":  col,
-                "drifted":  info["drift_detected"],
-                "score":    round(info["drift_score"], 4),
-                "stattest": info["stattest_name"],
-            })
-        n_drifted     = m["result"]["number_of_drifted_columns"]
-        n_total       = m["result"]["number_of_columns"]
-        dataset_drift = m["result"]["dataset_drift"]
+    # Run the drift report
+    report = Report(metrics=[DataDriftPreset(), TargetDriftPreset()])
+    report.run(reference_data=train, current_data=test, column_mapping=col_map)
 
-summary     = pd.DataFrame(rows).sort_values("drifted", ascending=False)
-spike_train = train[TARGET].mean() * 100
-spike_test  = test[TARGET].mean()  * 100
-generated   = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    # Parse feature drift results (target excluded)
+    result = report.as_dict()
+    rows = []
+    dataset_drift = False
+    n_drifted = n_total = 0
+    for m in result["metrics"]:
+        if m["metric"] == "DataDriftTable":
+            for col, info in m["result"]["drift_by_columns"].items():
+                rows.append({
+                    "feature":  col,
+                    "drifted":  info["drift_detected"],
+                    "score":    round(info["drift_score"], 4),
+                    "stattest": info["stattest_name"],
+                })
+            n_drifted     = m["result"]["number_of_drifted_columns"]
+            n_total       = m["result"]["number_of_columns"]
+            dataset_drift = m["result"]["dataset_drift"]
 
-table_rows = "\n".join(
-    f'<tr><td>{r.feature}</td>'
-    f'<td>{"Yes" if r.drifted else "No"}</td>'
-    f'<td>{r.score}</td>'
-    f'<td>{r.stattest}</td></tr>'
-    for r in summary.itertuples()
-)
+    # Build the summary HTML panel
+    summary     = pd.DataFrame(rows).sort_values("drifted", ascending=False)
+    spike_train = train[TARGET].mean() * 100
+    spike_test  = test[TARGET].mean()  * 100
+    generated   = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
-panel = f"""
+    table_rows = "\n".join(
+        f'<tr><td>{r.feature}</td>'
+        f'<td>{"Yes" if r.drifted else "No"}</td>'
+        f'<td>{r.score}</td>'
+        f'<td>{r.stattest}</td></tr>'
+        for r in summary.itertuples()
+    )
+
+    panel = f"""
 <div id="drift-summary" style="
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     max-width: 960px; margin: 32px auto 0 auto; padding: 28px 36px;
@@ -129,11 +136,16 @@ Collecting data across multiple full days will average out session effects and r
 </div>
 """
 
-out = Path("reports/evidently/train_vs_test.html")
-out.parent.mkdir(parents=True, exist_ok=True)
-report.save_html(str(out))
-html = out.read_text()
-html = html.replace("<body>", "<body>\n" + panel, 1)
-out.write_text(html)
-print(f"Saved -> {out}")
-print(f"Features drifted: {n_drifted}/{n_total}  |  spike rate {spike_train:.1f}% -> {spike_test:.1f}%")
+    # Save the Evidently HTML report with summary panel injected at the top
+    out = Path("reports/evidently/train_vs_test.html")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    report.save_html(str(out))
+    html = out.read_text()
+    html = html.replace("<body>", "<body>\n" + panel, 1)
+    out.write_text(html)
+    print(f"Saved -> {out}")
+    print(f"Features drifted: {n_drifted}/{n_total}  |  spike rate {spike_train:.1f}% -> {spike_test:.1f}%")
+
+
+if __name__ == "__main__":
+    main()

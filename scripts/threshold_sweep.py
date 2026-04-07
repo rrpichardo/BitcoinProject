@@ -69,7 +69,9 @@ def best_f1_threshold(y_true, y_prob):
 
 def run_threshold(percentile, vol_threshold, train, val, test, experiment_id):
     """Train variant B at a given vol_spike threshold; return results dict."""
-    # Re-derive labels
+    # Copy to avoid mutating the caller's DataFrames — prevents label leakage across sweep runs
+    train, val, test = train.copy(), val.copy(), test.copy()
+    # Re-derive labels on the local copies
     for split in [train, val, test]:
         split["vol_spike"] = (split["future_vol_60s"] >= vol_threshold).astype(int)
 
@@ -186,7 +188,7 @@ def main():
         print(f"=== P{p}: vol_threshold={thresholds[p]:.6f} ===")
         result = run_threshold(
             p, thresholds[p],
-            train.copy(), val.copy(), test.copy(),
+            train, val, test,
             experiment_id,
         )
         gap = abs(result["val_pr_auc"] - result["test_pr_auc"])

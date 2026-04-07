@@ -51,11 +51,16 @@ class AtomicParquetSink:
             log.info("Parquet sink closed without writes; leaving %s untouched", self._path)
             return
 
+        # Flush remaining rows and close the writer
+        self._flush()
+        self._writer.close()
+        # Atomic rename — if this fails, the temp file is preserved so data isn't lost
         try:
-            self._flush()
-            self._writer.close()
             self._tmp_path.replace(self._path)
             log.info("Parquet sink committed %d rows → %s", self._rows_written, self._path)
-        finally:
-            if self._tmp_path.exists():
-                self._tmp_path.unlink()
+        except OSError:
+            log.error(
+                "Failed to rename %s → %s; temp file preserved for recovery",
+                self._tmp_path, self._path,
+            )
+            raise

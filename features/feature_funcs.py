@@ -102,6 +102,9 @@ def compute_rolling_stats(buffer: deque, window_sec: float) -> dict[str, float]:
     ]
 
     mean_r = sum(returns) / len(returns)
+    # Population variance (divides by n, not n-1). This is intentional: with
+    # ~240 ticks in a typical 60s window the bias is negligible, and using
+    # population variance keeps the metric stable for very short windows (n=2).
     variance = sum((r - mean_r) ** 2 for r in returns) / len(returns)
 
     prices = [e["price"] for e in window]
@@ -173,5 +176,6 @@ def compute_future_vol(buffer: deque, horizon_sec: float) -> float | None:
         for i in range(1, len(window))
     ]
     mean_r = sum(returns) / len(returns)
+    # Population variance — consistent with compute_rolling_stats (see note there)
     variance = sum((r - mean_r) ** 2 for r in returns) / len(returns)
     return math.sqrt(variance)

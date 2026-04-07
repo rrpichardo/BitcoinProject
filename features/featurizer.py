@@ -264,7 +264,7 @@ def main():
     topic_out     = args.topic_out     or cfg["kafka"]["topic_features"]
     group_id      = cfg["kafka"]["group_id"]
     window_sec    = float(cfg["features"]["window_seconds"])
-    horizon_sec   = float(cfg["features"]["label_lookahead"]) * window_sec  # bars → seconds
+    horizon_sec   = float(cfg["features"]["label_horizon_sec"])
     vol_threshold = float(cfg["features"]["vol_threshold"])
     parquet_path  = Path(args.output_parquet or cfg["data"]["features_file"])
 
