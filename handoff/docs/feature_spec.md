@@ -12,9 +12,9 @@
 | ≈ $1σ move @ $60k | $2.88                                                       |
 | Percentile        | P85 — selected via threshold sweep (best val PR-AUC & F1)    |
 
-Threshold was updated from P90 (0.000046) to P85 (0.000048) after a structured
-threshold sweep across P85/P90/P95. P85 yielded the best validation PR-AUC (0.4863)
-and F1 (0.5188), giving the model sufficient positive examples (~15%) to learn
+Threshold was updated from P90 to P85 (0.000048) after a structured
+threshold sweep across P85/P90/P95. P85 yielded the best validation PR-AUC (0.3866)
+and F1 (0.4524), giving the model sufficient positive examples (~15%) to learn
 meaningful patterns.
 
 ---
@@ -46,10 +46,10 @@ Threshold selected on validation best-F1; winner picked on validation PR-AUC.
 
 | Variant | Features | val PR-AUC | Outcome |
 |---------|----------|-----------|---------|
-| A | 6 baseline features | 0.4990 | Control |
-| B | A + `spread_mean_60s` | **0.5182** | **Winner** — liquidity signal improves performance |
-| C | B + `price_range_60s` | 0.5033 | `price_range_60s` adds noise, slight drop from B |
-| D | C − `spread_abs` − `n_ticks_60s` | 0.5033 | Identical to C; confirms dropped features are redundant |
+| A | 6 baseline features | 0.3471 | Control |
+| B | A + `spread_mean_60s` | **0.3580** | **Winner** — liquidity signal improves performance |
+| C | B + `price_range_60s` | 0.3517 | `price_range_60s` adds noise, slight drop from B |
+| D | C − `spread_abs` − `n_ticks_60s` | 0.3517 | Identical to C; confirms dropped features are redundant |
 
 ### Correlation analysis results
 
@@ -65,7 +65,7 @@ Highly correlated pairs (|r| > 0.85) informed the ablation design:
 
 | Feature | Tested in | Result | Rationale for exclusion |
 |---------|-----------|--------|------------------------|
-| `price_range_60s` | Variants C, D | No lift over B (val PR-AUC 0.5033 vs 0.5182) | Adds dimensionality without improving discrimination |
+| `price_range_60s` | Variants C, D | No lift over B (val PR-AUC 0.3517 vs 0.3580) | Adds dimensionality without improving discrimination |
 
 ### Final model feature set (Variant B — 7 features)
 

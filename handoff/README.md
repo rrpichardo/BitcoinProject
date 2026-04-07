@@ -2,7 +2,7 @@
 
 ## Model Selection: Selected-Base
 
-The deployed model is the **Logistic Regression pipeline** (`models/artifacts/lr_pipeline.pkl`), chosen as the selected-base model. It outperforms the z-score baseline on unseen test data (Test PR-AUC 0.4163 vs 0.2611) using a time-based evaluation split with no data leakage.
+The deployed model is the **Logistic Regression pipeline** (`models/artifacts/lr_pipeline.pkl`), chosen as the selected-base model. It outperforms the z-score baseline on unseen test data (Test PR-AUC 0.1459 vs 0.1340) using a time-based evaluation split with no data leakage.
 
 ---
 
@@ -40,7 +40,7 @@ docker logs kafka-init
 
 ### 4. Load the Model and Run Inference
 
-The model uses a **probability threshold of 0.6373** — a tick is predicted as a volatility spike when `y_prob >= 0.6373`.
+The model uses a **probability threshold of 0.7015** — a tick is predicted as a volatility spike when `y_prob >= 0.7015`.
 
 ```python
 import pickle
@@ -50,7 +50,7 @@ with open("models/artifacts/lr_pipeline.pkl", "rb") as f:
     bundle = pickle.load(f)
 
 pipeline     = bundle["pipeline"]      # sklearn Pipeline (StandardScaler + LogisticRegression)
-feature_cols = bundle["feature_cols"]  # list of 6 feature column names
+feature_cols = bundle["feature_cols"]  # list of 7 feature column names
 tau          = bundle["tau"]            # probability threshold (auto-selected from validation best-F1)
 
 df      = pd.read_parquet("data_sample/features_slice.parquet")  # or your own features file
@@ -85,7 +85,7 @@ handoff/
 │   └── model_card_v1.md      Model card
 ├── models/
 │   └── artifacts/
-│       └── lr_pipeline.pkl   Trained sklearn pipeline (tau = 0.6373)
+│       └── lr_pipeline.pkl   Trained sklearn pipeline (tau = 0.7015)
 ├── data_sample/
 │   ├── raw_slice.parquet     First 10 minutes of raw tick data
 │   └── features_slice.csv    Corresponding labelled feature rows

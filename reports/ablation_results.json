@@ -12,16 +12,16 @@
         "trade_intensity_60s",
         "n_ticks_60s"
       ],
-      "tau": 0.715606,
-      "run_id": "223f08258a7b4c7bade31cdf0b54dcb0",
-      "val_pr_auc": 0.499,
-      "val_f1": 0.5175,
-      "val_precision": 0.4923,
-      "val_recall": 0.5453,
-      "test_pr_auc": 0.2371,
-      "test_f1": 0.2842,
-      "test_precision": 0.348,
-      "test_recall": 0.2401
+      "tau": 0.70553,
+      "run_id": "e65db3a9f83546df9ee22ef4b870428e",
+      "val_pr_auc": 0.3471,
+      "val_f1": 0.4295,
+      "val_precision": 0.4446,
+      "val_recall": 0.4154,
+      "test_pr_auc": 0.1317,
+      "test_f1": 0.124,
+      "test_precision": 0.1128,
+      "test_recall": 0.1378
     },
     {
       "variant": "B",
@@ -35,16 +35,16 @@
         "n_ticks_60s",
         "spread_mean_60s"
       ],
-      "tau": 0.724321,
-      "run_id": "342387800b144e19b84aada839e3fc36",
-      "val_pr_auc": 0.5182,
-      "val_f1": 0.5286,
-      "val_precision": 0.5394,
-      "val_recall": 0.5182,
-      "test_pr_auc": 0.2436,
-      "test_f1": 0.2953,
-      "test_precision": 0.3962,
-      "test_recall": 0.2354
+      "tau": 0.701511,
+      "run_id": "2b9796edb335404cb2deb17f2c9226e2",
+      "val_pr_auc": 0.358,
+      "val_f1": 0.4463,
+      "val_precision": 0.466,
+      "val_recall": 0.4282,
+      "test_pr_auc": 0.1459,
+      "test_f1": 0.1359,
+      "test_precision": 0.1285,
+      "test_recall": 0.1441
     },
     {
       "variant": "C",
@@ -59,16 +59,16 @@
         "spread_mean_60s",
         "price_range_60s"
       ],
-      "tau": 0.686995,
-      "run_id": "b5fe421568254a71a321fd84798f156e",
-      "val_pr_auc": 0.5033,
-      "val_f1": 0.5207,
-      "val_precision": 0.4839,
-      "val_recall": 0.5635,
-      "test_pr_auc": 0.2492,
-      "test_f1": 0.3501,
-      "test_precision": 0.3286,
-      "test_recall": 0.3747
+      "tau": 0.669135,
+      "run_id": "4ba9fb9463234702a17063bae635a3ad",
+      "val_pr_auc": 0.3517,
+      "val_f1": 0.4366,
+      "val_precision": 0.3984,
+      "val_recall": 0.4828,
+      "test_pr_auc": 0.1589,
+      "test_f1": 0.1576,
+      "test_precision": 0.1364,
+      "test_recall": 0.1866
     },
     {
       "variant": "D",
@@ -82,16 +82,16 @@
         "spread_mean_60s",
         "price_range_60s"
       ],
-      "tau": 0.686988,
-      "run_id": "422b454bef144c3097d292338c757087",
-      "val_pr_auc": 0.5033,
-      "val_f1": 0.5207,
-      "val_precision": 0.4839,
-      "val_recall": 0.5635,
-      "test_pr_auc": 0.2492,
-      "test_f1": 0.3501,
-      "test_precision": 0.3286,
-      "test_recall": 0.3747
+      "tau": 0.669133,
+      "run_id": "e2147ddb2093413fb86a3a7485aef92f",
+      "val_pr_auc": 0.3517,
+      "val_f1": 0.4366,
+      "val_precision": 0.3984,
+      "val_recall": 0.4828,
+      "test_pr_auc": 0.1589,
+      "test_f1": 0.1576,
+      "test_precision": 0.1364,
+      "test_recall": 0.1866
     }
   ]
 }
