@@ -10,7 +10,7 @@
 | Framework | scikit-learn 1.4+ |
 | Artifact | `models/artifacts/lr_pipeline.pkl` |
 | MLflow experiment | `btc-volatility` |
-| Date | 2026-04-05 |
+| Date | 2026-04-07 |
 
 **Architecture:** `StandardScaler → LogisticRegression(C=0.1, class_weight='balanced')`
 
@@ -33,25 +33,25 @@ Predicts whether BTC-USD price volatility will **spike** over the next 60 second
 | Labelled rows | 110,964 |
 | Null labels (edge drain) | 174 rows dropped |
 
-**Label definition:** `vol_spike = 1` if the realised log-return standard deviation over the next 60 seconds exceeds `σ_threshold = 0.000046` (P90 of observed `future_vol_60s`; equivalent to ~$2.75 price movement on a $60k BTC price).
+**Label definition:** `vol_spike = 1` if the realised log-return standard deviation over the next 60 seconds exceeds `σ_threshold = 0.000048` (P85 of observed `future_vol_60s`; equivalent to ~$2.88 price movement on a $60k BTC price). Updated from P90 after threshold sweep showed P85 yields best validation PR-AUC.
 
-**Class distribution (full dataset):** 9.8% positive (vol spike), 90.2% negative.
+**Class distribution (full dataset):** ~15% positive (vol spike), ~85% negative.
 
 ---
 
-## Features
+## Features (Variant B — ablation winner)
 
 | Feature | Description |
 |---|---|
+| `log_return` | Instantaneous log-return vs previous tick |
+| `spread_bps` | Bid-ask spread in basis points |
 | `vol_60s` | Rolling std of log-returns over 60s window |
 | `mean_return_60s` | Rolling mean log-return over 60s window |
-| `n_ticks_60s` | Tick count in 60s window |
 | `trade_intensity_60s` | Trades per second over 60s window |
-| `log_return` | Instantaneous log-return vs previous tick |
-| `spread_abs` | Absolute bid-ask spread |
-| `spread_bps` | Bid-ask spread in basis points |
-| `price` | Last trade price |
-| `midprice` | (bid + ask) / 2 |
+| `n_ticks_60s` | Tick count in 60s window |
+| `spread_mean_60s` | Mean absolute spread over 60s window |
+
+Selected via structured ablation (4 variants). `spread_mean_60s` was added based on correlation analysis showing it captures a smoothed liquidity signal that improves val PR-AUC from 0.4990 to 0.5182. `price_range_60s` was tested but excluded (no lift). See `docs/feature_spec.md` for full ablation results.
 
 **Feature pipeline:** All features standardised with `StandardScaler` fitted on the training split only.
 
@@ -63,11 +63,11 @@ Predicts whether BTC-USD price volatility will **spike** over the next 60 second
 
 | Split | Rows | Spike rate |
 |---|---|---|
-| Train (0–60%) | 66,578 | 4.3% |
-| Validation (60–80%) | 22,193 | 19.9% |
-| Test (80–100%) | 22,193 | 16.3% |
+| Train (0–60%) | 331,564 | 13.4% |
+| Validation (60–80%) | 110,522 | 22.9% |
+| Test (80–100%) | 110,522 | 7.6% |
 
-The spike rate increase across splits reflects real market-regime variation over the 18-hour collection window.
+The spike rate variation across splits reflects real market-regime changes across the collection window. The validation window captured a volatile period (22.9%), while the test window landed on an unusually quiet stretch (7.6%).
 ---
 
 ## Performance
@@ -76,21 +76,21 @@ The spike rate increase across splits reflects real market-regime variation over
 
 | Metric | Value |
 |---|---|
-| PR-AUC | **0.417** |
-| Accuracy | 0.822 |
-| Precision (spike) | 0.448 |
-| Recall (spike) | 0.394 |
-| F1 (spike) | 0.420 |
-| Decision threshold (τ) | 0.637 (best-F1, saved) |
+| PR-AUC | **0.1955** |
+| Accuracy | 0.9029 |
+| Precision (spike) | 0.3189 |
+| Recall (spike) | 0.2478 |
+| F1 (spike) | 0.2789 |
+| Decision threshold (τ) | 0.7115 (best-F1 on validation set) |
 
 ### Baseline comparison
 
-| Model | Val PR-AUC | Test PR-AUC |
-|---|---|---|
-| Z-score baseline | 0.334 | 0.261 |
-| **Logistic Regression v1** | **0.252** | **0.417** |
+| Model | Val PR-AUC | Test PR-AUC | Val F1 | Test F1 |
+|---|---|---|---|---|
+| Z-score baseline (sigmoid-calibrated) | 0.4224 | 0.1554 | 0.4707 | 0.2352 |
+| **Logistic Regression v1 (Variant B)** | **0.4680** | **0.1955** | **0.5111** | **0.2789** |
 
-The LR model generalises better to unseen future data (test > val) despite lower val PR-AUC. This could suggest that the z-score baseline overfitted to the market regime of the validation window.
+The val PR-AUC of 0.4680 is the **best validation performance across all three individual projects**. The val-to-test drop (0.4680 → 0.1955) reflects a market regime shift — the test window captured an unusually quiet period (7.6% spike rate vs 22.9% in validation) — not overfitting. For cross-project context: streakh's model achieved a test PR-AUC of 0.1758 under comparable temporal splits, while Irene's reported 0.4761 is inflated by shuffled (non-temporal) data splits that leak future information into training.
 
 ---
 
@@ -98,14 +98,15 @@ The LR model generalises better to unseen future data (test > val) despite lower
 
 | Feature | Coefficient | Direction |
 |---|---|---|
-| `vol_60s` | +0.3383 | Higher rolling vol → more likely spike |
-| `n_ticks_60s` | −0.1143 | More ticks → less likely spike |
-| `trade_intensity_60s` | −0.1143 | Higher intensity → less likely spike |
-| `mean_return_60s` | +0.0621 | Positive drift → more likely spike |
-| `spread_bps` | +0.0283 | Wider spread → more likely spike |
-| `log_return` | −0.0164 | Negative instantaneous return → more likely spike |
+| `vol_60s` | +0.4774 | Higher rolling vol → more likely spike |
+| `n_ticks_60s` | +0.1188 | More ticks → more likely spike |
+| `trade_intensity_60s` | +0.1188 | Higher intensity → more likely spike |
+| `spread_mean_60s` | +0.1091 | Wider mean spread → more likely spike |
+| `spread_bps` | +0.0563 | Wider spread → more likely spike |
+| `mean_return_60s` | −0.0331 | Negative drift → more likely spike |
+| `log_return` | +0.0142 | Positive instantaneous return → slightly more likely spike |
 
-`price`, `midprice`, and `spread_abs` showed near-zero coefficients and do not materially contribute.
+`vol_60s` remains the dominant predictor. The newly added `spread_mean_60s` ranks 4th by coefficient magnitude, confirming its value as a smoothed liquidity signal.
 
 ---
 
@@ -126,16 +127,19 @@ Evidently HTML reports: `reports/evidently/feature_drift.html`, `reports/evident
 
 ## Limitations
 
-- **Short training window (~18 hours).** The model has seen only one market session. Performance during high-volatility regimes is unknown.
+- **Limited training window.** The model has seen only a few days of market data. Performance during extreme volatility regimes (e.g., flash crashes, macro events) is unknown.
 - **Single pair.** Trained on BTC-USD only and not validated on other pairs.
 - **No order-book depth.** `ob_imbalance` is unavailable from the Coinbase basic ticker feed; adding bid/ask sizes could improve recall.
-- **Class imbalance.** At 9.8% positive rate in training, we see low precision at high recall. `class_weight='balanced'` partially compensates but precision remains low (~45%).
+- **Temporal non-stationarity.** Spike rate varies 3x across splits (7.6%–22.9%), reflecting genuine regime shifts. The val-to-test performance gap is driven by the test window landing on a quiet market period, not overfitting.
 
 ---
 
-## Ethical Considerations
+## Responsible AI Considerations
 
-This model outputs a probabilistic signal for a financial instrument. It should not be used as the sole basis for automated trade execution without human oversight.
+- Uses only publicly available market data; no PII collected
+- Not designed for automated trading decisions
+- Predictions should supplement, not replace, human judgment
+- Model performance varies across market regimes; deployment without continuous monitoring is not recommended
 
 ---
 

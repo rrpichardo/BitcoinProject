@@ -116,6 +116,8 @@ NUMERIC_COLS = [
     "price", "midprice", "log_return",
     "spread_abs", "spread_bps",
     "vol_60s", "mean_return_60s", "trade_intensity_60s",
+    "spread_mean_60s",
+    "price_range_60s",
     "future_vol_60s",
 ]
 
@@ -176,7 +178,12 @@ def test_single_tick_no_label():
     ticks  = [_tick(0, 67_000.0)]
     rows_r = _run_state(replay_mod.ProductState,     ticks)
     rows_f = _run_state(featurizer_mod.ProductState, ticks)
-    # drain_remaining with force=True may emit NaN-labelled rows; either 0 or 1
-    # but vol_spike must be 0 (no future data)
-    for row in rows_r + rows_f:
-        assert row["vol_spike"] == 0
+    assert rows_r == []
+    assert rows_f == []
+
+
+def test_force_drain_does_not_emit_partial_labels(tick_stream):
+    rows_r = _run_state(replay_mod.ProductState, tick_stream)
+    rows_f = _run_state(featurizer_mod.ProductState, tick_stream)
+    assert all(not math.isnan(row["future_vol_60s"]) for row in rows_r)
+    assert all(not math.isnan(row["future_vol_60s"]) for row in rows_f)

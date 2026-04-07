@@ -7,14 +7,15 @@
 | Target horizon    | 60 seconds                                                   |
 | Volatility proxy  | Rolling std of midprice log-returns over the next 60s        |
 | Label definition  | `vol_spike = 1` if `σ_future >= τ`; else `0`                |
-| Chosen threshold τ | **0.000046**                                                |
-| Spike rate at τ   | ~10% of labelled ticks                                       |
-| ≈ $1σ move @ $60k | $2.75                                                       |
-| Percentile        | P90 — elbow of the σ_future distribution                     |
+| Chosen threshold τ | **0.000048**                                                |
+| Spike rate at τ   | ~15% of labelled ticks                                       |
+| ≈ $1σ move @ $60k | $2.88                                                       |
+| Percentile        | P85 — selected via threshold sweep (best val PR-AUC & F1)    |
 
-Threshold was chosen at P90 of the observed `future_vol_60s` distribution.
-At this point the percentile curve visibly steepens, giving the visually most accurate
-separation between baseline noise and genuine spike events. 
+Threshold was updated from P90 (0.000046) to P85 (0.000048) after a structured
+threshold sweep across P85/P90/P95. P85 yielded the best validation PR-AUC (0.4863)
+and F1 (0.5188), giving the model sufficient positive examples (~15%) to learn
+meaningful patterns.
 
 ---
 
@@ -33,6 +34,8 @@ All features are computed per tick from a lookback window of `window_seconds = 6
 | `mean_return_60s`     | Mean log-return over past 60s                                    | dimensionless   |
 | `n_ticks_60s`         | Count of ticks in the past 60s                                   | integer         |
 | `trade_intensity_60s` | `n_ticks_60s / 60`  (ticks per second)                          | ticks/sec       |
+| `spread_mean_60s`     | Mean absolute spread over past 60s                              | USD             |
+| `price_range_60s`     | `max(price) − min(price)` over past 60s                         | USD             |
 
 ---
 
@@ -51,5 +54,7 @@ All features are computed per tick from a lookback window of `window_seconds = 6
 | `mean_return_60s`     | float64   |                                          |
 | `n_ticks_60s`         | int64     |                                          |
 | `trade_intensity_60s` | float64   |                                          |
+| `spread_mean_60s`     | float64   | Mean absolute spread over 60s window       |
+| `price_range_60s`     | float64   | max − min price over 60s window            |
 | `future_vol_60s`      | float64   | σ over next 60s; NaN if horizon not closed |
-| `vol_spike`           | int64     | 1 if `future_vol_60s >= 0.000046` else 0 |
+| `vol_spike`           | int64     | 1 if `future_vol_60s >= 0.000048` else 0 |

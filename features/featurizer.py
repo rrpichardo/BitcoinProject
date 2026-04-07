@@ -29,13 +29,14 @@ import argparse
 import json
 import logging
 import os
+import re
 import signal
+import time
 from collections import deque
 from datetime import datetime
 from pathlib import Path
 
 import pyarrow as pa
-import pyarrow.parquet as pq
 import yaml
 from confluent_kafka import Consumer, KafkaError, Producer
 
@@ -45,8 +46,10 @@ from feature_funcs import (
     compute_return,
     compute_rolling_stats,
     compute_spread,
+    compute_spread_mean,
     compute_trade_intensity,
 )
+from parquet_sink import AtomicParquetSink
 
 logging.basicConfig(
     level=logging.INFO,
@@ -69,6 +72,8 @@ PARQUET_SCHEMA = pa.schema([
     ("mean_return_60s",     pa.float64()),
     ("n_ticks_60s",         pa.int64()),
     ("trade_intensity_60s", pa.float64()),
+    ("spread_mean_60s",     pa.float64()),
+    ("price_range_60s",     pa.float64()),
     ("future_vol_60s",      pa.float64()),
     ("vol_spike",           pa.int64()),
 ])
@@ -87,34 +92,11 @@ def load_config(path: str) -> dict:
 # Parquet sink
 # ---------------------------------------------------------------------------
 
-class ParquetSink:
-    """Buffers labelled feature rows; flushes as row-groups via ParquetWriter."""
+class ParquetSink(AtomicParquetSink):
+    """Buffers labelled feature rows and commits the output atomically."""
 
     def __init__(self, path: Path, flush_rows: int = FLUSH_ROWS):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self._path       = path
-        self._flush_rows = flush_rows
-        self._buf: list[dict] = []
-        self._writer     = pq.ParquetWriter(str(path), PARQUET_SCHEMA)
-        log.info("Parquet sink opened: %s", path)
-
-    def write(self, row: dict) -> None:
-        self._buf.append(row)
-        if len(self._buf) >= self._flush_rows:
-            self._flush()
-
-    def _flush(self) -> None:
-        if not self._buf:
-            return
-        table = pa.Table.from_pylist(self._buf, schema=PARQUET_SCHEMA)
-        self._writer.write_table(table)
-        log.info("Parquet flush: %d rows → %s", len(self._buf), self._path)
-        self._buf.clear()
-
-    def close(self) -> None:
-        self._flush()
-        self._writer.close()
-        log.info("Parquet sink closed: %s", self._path)
+        super().__init__(path=path, schema=PARQUET_SCHEMA, flush_rows=flush_rows)
 
 
 # ---------------------------------------------------------------------------
@@ -128,9 +110,10 @@ class ProductState:
         self.window_sec    = window_sec
         self.horizon_sec   = horizon_sec
         self.vol_threshold = vol_threshold
-        self.price_buf: deque = deque()   # {"price": float, "ts": float}
-        self.ts_buf:    deque = deque()   # float timestamps
-        self.pending:   deque = deque()   # {"row": dict, "ts": float}
+        self.price_buf:  deque = deque()   # {"price": float, "ts": float}
+        self.spread_buf: deque = deque()  # {"spread_abs": float, "ts": float}
+        self.ts_buf:     deque = deque()  # float timestamps
+        self.pending:    deque = deque()  # {"row": dict, "ts": float}
 
     # ------------------------------------------------------------------
     def ingest(self, tick: dict) -> list[dict]:
@@ -151,17 +134,21 @@ class ProductState:
 
         # Append before rolling stats so this tick is included
         self.price_buf.append({"price": price, "ts": ts})
+        self.spread_buf.append({"spread_abs": spread["spread_abs"], "ts": ts})
         self.ts_buf.append(ts)
 
         # Prune entries older than BUFFER_MAX_AGE
         cutoff = ts - BUFFER_MAX_AGE
         while self.price_buf and self.price_buf[0]["ts"] < cutoff:
             self.price_buf.popleft()
+        while self.spread_buf and self.spread_buf[0]["ts"] < cutoff:
+            self.spread_buf.popleft()
         while self.ts_buf and self.ts_buf[0] < cutoff:
             self.ts_buf.popleft()
 
-        rolling   = compute_rolling_stats(self.price_buf, self.window_sec)
-        intensity = compute_trade_intensity(self.ts_buf, self.window_sec)
+        rolling     = compute_rolling_stats(self.price_buf, self.window_sec)
+        intensity   = compute_trade_intensity(self.ts_buf, self.window_sec)
+        spread_mean = compute_spread_mean(self.spread_buf, self.window_sec)
 
         features = {
             "product_id":          tick["product_id"],
@@ -175,6 +162,8 @@ class ProductState:
             "mean_return_60s":     rolling["mean_return"],
             "n_ticks_60s":         rolling["n_ticks"],
             "trade_intensity_60s": intensity,
+            "spread_mean_60s":     spread_mean,
+            "price_range_60s":     rolling["price_range"],
         }
 
         self.pending.append({"row": features, "ts": ts})
@@ -210,15 +199,14 @@ class ProductState:
 
             future_vol = compute_future_vol(future_slice, self.horizon_sec)
 
-            if future_vol is None and not force:
-                # Window didn't close cleanly — skip
+            if future_vol is None:
+                # Never emit partially labelled rows; they contaminate training targets.
                 continue
 
-            fv = future_vol if future_vol is not None else float("nan")
             labelled = {
                 **entry["row"],
-                "future_vol_60s": fv,
-                "vol_spike":      int(fv > self.vol_threshold) if future_vol is not None else 0,
+                "future_vol_60s": future_vol,
+                "vol_spike":      int(future_vol > self.vol_threshold),
             }
             ready.append(labelled)
 
@@ -230,12 +218,29 @@ class ProductState:
 # ---------------------------------------------------------------------------
 
 def _parse_ts(ts_str: str) -> float:
+    # Truncate nanosecond precision to microseconds; fromisoformat supports up to 6 digits
+    ts_str = re.sub(r"(\.\d{6})\d+", r"\1", ts_str)
     return datetime.fromisoformat(ts_str.replace("Z", "+00:00")).timestamp()
 
 
 def _delivery_report(err, _msg):
     if err:
         log.error("Delivery failed: %s", err)
+
+
+def _wait_for_kafka(client, bootstrap: str, timeout: float) -> None:
+    deadline = time.monotonic() + timeout
+    last_exc: Exception | None = None
+    while time.monotonic() < deadline:
+        try:
+            client.list_topics(timeout=1.0)
+            return
+        except Exception as exc:  # pragma: no cover - exercised in integration
+            last_exc = exc
+            time.sleep(1.0)
+    raise RuntimeError(
+        f"Kafka bootstrap {bootstrap!r} was not reachable within {timeout:.0f}s"
+    ) from last_exc
 
 
 # ---------------------------------------------------------------------------
@@ -248,6 +253,8 @@ def main():
     parser.add_argument("--topic_in",       default=None, help="Override ticks.raw topic")
     parser.add_argument("--topic_out",      default=None, help="Override ticks.features topic")
     parser.add_argument("--output_parquet", default=None, help="Override Parquet output path")
+    parser.add_argument("--startup-timeout", type=float, default=10.0,
+                        help="Seconds to wait for Kafka before failing (default: 10)")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -270,6 +277,7 @@ def main():
     consumer.subscribe([topic_in])
 
     producer = Producer({"bootstrap.servers": bootstrap})
+    _wait_for_kafka(consumer, bootstrap, args.startup_timeout)
     sink     = ParquetSink(parquet_path)
 
     states: dict[str, ProductState] = {}
@@ -315,8 +323,12 @@ def main():
 
         for row in labelled_rows:
             value = json.dumps(row)
-            producer.produce(topic_out, key=pid, value=value, callback=_delivery_report)
-            producer.poll(0)
+            # Attempt Kafka publish; on failure log and continue so Parquet sink still gets the row
+            try:
+                producer.produce(topic_out, key=pid, value=value, callback=_delivery_report)
+                producer.poll(0)
+            except Exception as e:
+                log.warning("Kafka publish failed, continuing: %s", e)
             sink.write(row)
             log.debug("Emitted: %s", row)
 
@@ -324,8 +336,12 @@ def main():
     for pid, state in states.items():
         for row in state.drain_remaining():
             value = json.dumps(row)
-            producer.produce(topic_out, key=pid, value=value, callback=_delivery_report)
-            producer.poll(0)
+            # Same graceful fallback on shutdown drain — don't lose Parquet rows if Kafka is down
+            try:
+                producer.produce(topic_out, key=pid, value=value, callback=_delivery_report)
+                producer.poll(0)
+            except Exception as e:
+                log.warning("Kafka publish failed, continuing: %s", e)
             sink.write(row)
 
     producer.flush()

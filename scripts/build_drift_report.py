@@ -14,6 +14,7 @@ from evidently.pipeline.column_mapping import ColumnMapping
 FEATURE_COLS = [
     "log_return", "spread_bps", "vol_60s",
     "mean_return_60s", "trade_intensity_60s", "n_ticks_60s",
+    "spread_mean_60s",
 ]
 TARGET = "vol_spike"
 

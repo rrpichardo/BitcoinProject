@@ -19,8 +19,10 @@ Usage
 
 import argparse
 import glob
+import heapq
 import json
 import logging
+import re
 import sys
 from collections import deque
 from datetime import datetime
@@ -29,7 +31,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "features"))
 
 import pyarrow as pa
-import pyarrow.parquet as pq
 import yaml
 
 from feature_funcs import (
@@ -38,8 +39,10 @@ from feature_funcs import (
     compute_return,
     compute_rolling_stats,
     compute_spread,
+    compute_spread_mean,
     compute_trade_intensity,
 )
+from parquet_sink import AtomicParquetSink
 
 logging.basicConfig(
     level=logging.INFO,
@@ -62,6 +65,8 @@ PARQUET_SCHEMA = pa.schema([
     ("mean_return_60s",     pa.float64()),
     ("n_ticks_60s",         pa.int64()),
     ("trade_intensity_60s", pa.float64()),
+    ("spread_mean_60s",     pa.float64()),
+    ("price_range_60s",     pa.float64()),
     ("future_vol_60s",      pa.float64()),
     ("vol_spike",           pa.int64()),
 ])
@@ -77,6 +82,8 @@ def load_config(path: str) -> dict:
 
 
 def _parse_ts(ts_str: str) -> float:
+    # Truncate nanosecond precision to microseconds; fromisoformat supports up to 6 digits
+    ts_str = re.sub(r"(\.\d{6})\d+", r"\1", ts_str)
     return datetime.fromisoformat(ts_str.replace("Z", "+00:00")).timestamp()
 
 
@@ -84,35 +91,9 @@ def _parse_ts(ts_str: str) -> float:
 # Parquet sink
 # ---------------------------------------------------------------------------
 
-class ParquetSink:
+class ParquetSink(AtomicParquetSink):
     def __init__(self, path: Path):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self._path   = path
-        self._buf: list[dict] = []
-        self._writer = pq.ParquetWriter(str(path), PARQUET_SCHEMA)
-
-    def write(self, row: dict) -> None:
-        self._buf.append(row)
-        if len(self._buf) >= FLUSH_ROWS:
-            self._flush()
-
-    def _flush(self) -> None:
-        if not self._buf:
-            return
-        self._writer.write_table(
-            pa.Table.from_pylist(self._buf, schema=PARQUET_SCHEMA)
-        )
-        self._buf.clear()
-
-    def close(self) -> int:
-        self._flush()
-        self._writer.close()
-        return self._total
-
-    @property
-    def _total(self) -> int:
-        # approximate — counts flushed + buffered
-        return 0  # tracked externally
+        super().__init__(path=path, schema=PARQUET_SCHEMA, flush_rows=FLUSH_ROWS)
 
 
 # ---------------------------------------------------------------------------
@@ -124,9 +105,10 @@ class ProductState:
         self.window_sec    = window_sec
         self.horizon_sec   = horizon_sec
         self.vol_threshold = vol_threshold
-        self.price_buf: deque = deque()
-        self.ts_buf:    deque = deque()
-        self.pending:   deque = deque()   # {"row": dict, "ts": float}
+        self.price_buf:  deque = deque()
+        self.spread_buf: deque = deque()
+        self.ts_buf:     deque = deque()
+        self.pending:    deque = deque()   # {"row": dict, "ts": float}
 
     def ingest(self, tick: dict) -> list[dict]:
         bid   = float(tick["best_bid"])
@@ -141,16 +123,20 @@ class ProductState:
         log_ret    = compute_return(price, prev_price)
 
         self.price_buf.append({"price": price, "ts": ts})
+        self.spread_buf.append({"spread_abs": spread["spread_abs"], "ts": ts})
         self.ts_buf.append(ts)
 
         cutoff = ts - BUFFER_MAX_AGE
         while self.price_buf and self.price_buf[0]["ts"] < cutoff:
             self.price_buf.popleft()
+        while self.spread_buf and self.spread_buf[0]["ts"] < cutoff:
+            self.spread_buf.popleft()
         while self.ts_buf and self.ts_buf[0] < cutoff:
             self.ts_buf.popleft()
 
-        rolling   = compute_rolling_stats(self.price_buf, self.window_sec)
-        intensity = compute_trade_intensity(self.ts_buf, self.window_sec)
+        rolling     = compute_rolling_stats(self.price_buf, self.window_sec)
+        intensity   = compute_trade_intensity(self.ts_buf, self.window_sec)
+        spread_mean = compute_spread_mean(self.spread_buf, self.window_sec)
 
         features = {
             "product_id":          tick["product_id"],
@@ -164,6 +150,8 @@ class ProductState:
             "mean_return_60s":     rolling["mean_return"],
             "n_ticks_60s":         rolling["n_ticks"],
             "trade_intensity_60s": intensity,
+            "spread_mean_60s":     spread_mean,
+            "price_range_60s":     rolling["price_range"],
         }
 
         self.pending.append({"row": features, "ts": ts})
@@ -190,14 +178,13 @@ class ProductState:
 
             future_vol = compute_future_vol(future_slice, self.horizon_sec)
 
-            if future_vol is None and not force:
+            if future_vol is None:
                 continue
 
-            fv = future_vol if future_vol is not None else float("nan")
             ready.append({
                 **entry["row"],
-                "future_vol_60s": fv,
-                "vol_spike": int(fv > self.vol_threshold) if future_vol is not None else 0,
+                "future_vol_60s": future_vol,
+                "vol_spike": int(future_vol > self.vol_threshold),
             })
         return ready
 
@@ -206,11 +193,7 @@ class ProductState:
 # NDJSON loading
 # ---------------------------------------------------------------------------
 
-def iter_ticks(raw_inputs: list[str]):
-    """
-    Yield (ts_float, tick_dict) for every valid line across all matching files,
-    sorted by timestamp.
-    """
+def _discover_files(raw_inputs: list[str]) -> list[str]:
     files: list[str] = []
     for raw_input in raw_inputs:
         matches = sorted(glob.glob(raw_input, recursive=True))
@@ -219,46 +202,84 @@ def iter_ticks(raw_inputs: list[str]):
         elif Path(raw_input).is_file():
             files.append(raw_input)
 
-    files = sorted(dict.fromkeys(files))
+    files = [
+        path for path in sorted(dict.fromkeys(files))
+        if path.endswith(".ndjson") and not Path(path).name.startswith(".")
+    ]
     if not files:
         raise FileNotFoundError(f"No files matched: {raw_inputs!r}")
+    return files
+
+
+def _iter_file_ticks(path: str):
+    with open(path) as fh:
+        for lineno, line in enumerate(fh, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                tick = json.loads(line)
+                yield _parse_ts(tick["timestamp"]), tick
+            except (json.JSONDecodeError, KeyError) as exc:
+                log.warning("%s:%d — skipped (%s)", path, lineno, exc)
+
+
+def iter_ticks(raw_inputs: list[str]):
+    """
+    Yield (ts_float, tick_dict) for every valid line across all matching files,
+    sorted by timestamp.
+    """
+    files = _discover_files(raw_inputs)
     log.info("Loading %d file(s) from %r", len(files), raw_inputs)
 
-    rows: list[tuple[float, dict]] = []
-    seen_ticks: set[tuple] = set()
-    duplicate_count = 0
-    for path in files:
-        with open(path) as fh:
-            for lineno, line in enumerate(fh, 1):
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    tick = json.loads(line)
-                    dedupe_key = (
-                        tick.get("product_id"),
-                        tick.get("timestamp"),
-                        tick.get("price"),
-                        tick.get("best_bid"),
-                        tick.get("best_ask"),
-                        tick.get("volume_24_h"),
-                    )
-                    if dedupe_key in seen_ticks:
-                        duplicate_count += 1
-                        continue
-                    seen_ticks.add(dedupe_key)
-                    rows.append((_parse_ts(tick["timestamp"]), tick))
-                except (json.JSONDecodeError, KeyError) as exc:
-                    log.warning("%s:%d — skipped (%s)", path, lineno, exc)
+    iterators = [_iter_file_ticks(path) for path in files]
+    heap: list[tuple[float, int, dict]] = []
+    for idx, iterator in enumerate(iterators):
+        try:
+            ts, tick = next(iterator)
+        except StopIteration:
+            continue
+        heapq.heappush(heap, (ts, idx, tick))
 
-    rows.sort(key=lambda x: x[0])
+    duplicate_count = 0
+    emitted = 0
+    current_ts = None
+    seen_for_ts: set[tuple] = set()
+
+    while heap:
+        ts, idx, tick = heapq.heappop(heap)
+        dedupe_key = (
+            tick.get("product_id"),
+            tick.get("timestamp"),
+            tick.get("price"),
+            tick.get("best_bid"),
+            tick.get("best_ask"),
+            tick.get("volume_24_h"),
+        )
+        if current_ts != ts:
+            current_ts = ts
+            seen_for_ts.clear()
+
+        if dedupe_key in seen_for_ts:
+            duplicate_count += 1
+        else:
+            seen_for_ts.add(dedupe_key)
+            emitted += 1
+            yield ts, tick
+
+        iterator = iterators[idx]
+        try:
+            next_ts, next_tick = next(iterator)
+        except StopIteration:
+            continue
+        heapq.heappush(heap, (next_ts, idx, next_tick))
+
     log.info(
         "Loaded %d ticks across %d file(s) (%d duplicate lines skipped)",
-        len(rows),
+        emitted,
         len(files),
         duplicate_count,
     )
-    return rows
 
 
 # ---------------------------------------------------------------------------
@@ -287,14 +308,12 @@ def main():
     vol_threshold = float(cfg["features"]["vol_threshold"])
     out_path      = Path(args.out or cfg["data"]["features_file"])
 
-    ticks = iter_ticks(args.raw)
-
     sink   = ParquetSink(out_path)
     states: dict[str, ProductState] = {}
     emitted = 0
     pending_count = 0
 
-    for _ts, tick in ticks:
+    for _ts, tick in iter_ticks(args.raw):
         pid = tick.get("product_id", "unknown")
         if pid not in states:
             states[pid] = ProductState(window_sec, horizon_sec, vol_threshold)

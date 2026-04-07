@@ -18,7 +18,7 @@ websocket:
 
 features:
   window_seconds: 60        # rolling window for vol/return calc
-  vol_threshold: 0.000046   # P90 of observed future_vol_60s — ~10% spike rate, σ ≈ $2.75 on $60k BTC
+  vol_threshold: 0.000048   # P85 of observed future_vol_60s — ~15% spike rate, σ ≈ $2.88 on $60k BTC
   label_lookahead: 1        # bars ahead to define spike label (1 × window_seconds = 60s horizon)
 
 model:
@@ -28,7 +28,7 @@ model:
   scale_pos_weight: 5       # class imbalance weight
 
 mlflow:
-  tracking_uri: "sqlite:///mlruns/mlflow.db"
+  tracking_uri: "sqlite:///mlruns/mlflow_ui.db"
   experiment_name: btc-volatility
 
 evidently:

@@ -21,6 +21,7 @@ Usage
 """
 
 import argparse
+import json
 import pickle
 import sys
 import warnings
@@ -30,6 +31,7 @@ import mlflow
 import mlflow.sklearn
 import numpy as np
 import pandas as pd
+import scipy.special
 import yaml
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
@@ -40,7 +42,8 @@ from sklearn.metrics import (
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-warnings.filterwarnings("ignore")
+from sklearn.exceptions import ConvergenceWarning
+warnings.filterwarnings("ignore", category=ConvergenceWarning)
 
 ROOT      = Path(__file__).parent.parent
 ARTIFACTS = ROOT / "models" / "artifacts"
@@ -52,6 +55,7 @@ FEATURE_COLS = [
     "mean_return_60s",     # mean log-return over 60s
     "trade_intensity_60s", # ticks/sec
     "n_ticks_60s",         # tick count in window
+    "spread_mean_60s",     # mean spread over 60s window (Variant B)
 ]
 TARGET = "vol_spike"
 
@@ -61,8 +65,18 @@ TARGET = "vol_spike"
 # ---------------------------------------------------------------------------
 
 def load_data(path: Path) -> pd.DataFrame:
+    if not path.exists():
+        raise FileNotFoundError(f"Features parquet not found: {path}")
     df = pd.read_parquet(path).sort_values("timestamp").reset_index(drop=True)
+    required = {"timestamp", *FEATURE_COLS, TARGET}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"Features parquet is missing required columns: {sorted(missing)}")
     df = df.dropna(subset=FEATURE_COLS + [TARGET])
+    if "future_vol_60s" in df.columns:
+        df = df.dropna(subset=["future_vol_60s"])
+    if df.empty:
+        raise ValueError(f"No rows remain after dropping nulls from {path}")
     return df
 
 
@@ -75,7 +89,10 @@ def time_split(df: pd.DataFrame):
     n     = len(df)
     i_val = int(n * 0.60)
     i_tst = int(n * 0.80)
-    return df.iloc[:i_val], df.iloc[i_val:i_tst], df.iloc[i_tst:]
+    train, val, test = df.iloc[:i_val], df.iloc[i_val:i_tst], df.iloc[i_tst:]
+    if min(len(train), len(val), len(test)) == 0:
+        raise ValueError("Time split produced an empty train/val/test partition")
+    return train, val, test
 
 
 def pr_auc(y_true, y_prob):
@@ -102,10 +119,12 @@ def run_zscore(train, val, test, experiment_id: str, zscore_threshold: float = 2
     col   = "vol_60s"
     mu    = train[col].mean()
     sigma = train[col].std()
+    if pd.isna(sigma) or sigma == 0:
+        raise ValueError("Baseline z-score cannot train because train vol_60s has zero variance")
 
     def predict(df):
         z     = (df[col] - mu) / sigma
-        prob  = z / zscore_threshold          # pseudo-probability for PR-AUC
+        prob  = scipy.special.expit(z)        # sigmoid → calibrated [0, 1]
         pred  = (z >= zscore_threshold).astype(int)
         return prob.values, pred.values
 
@@ -122,11 +141,9 @@ def run_zscore(train, val, test, experiment_id: str, zscore_threshold: float = 2
             y_true        = split_df[TARGET].values
             y_prob, y_pred = predict(split_df)
 
-            # clip prob to [0, 1] for PR-AUC
-            y_prob_clip   = np.clip(y_prob, 0, 1)
-            auc           = pr_auc(y_true, y_prob_clip)
-            _tau, f1      = best_f1_threshold(y_true, y_prob_clip)
-            f1_fixed      = f1_at_tau(y_true, y_prob_clip, 0.5)
+            auc           = pr_auc(y_true, y_prob)
+            _tau, f1      = best_f1_threshold(y_true, y_prob)
+            f1_fixed      = f1_at_tau(y_true, y_prob, 0.5)
 
             mlflow.log_metrics({
                 f"{split_name}_pr_auc":          round(auc,       4),
@@ -136,13 +153,13 @@ def run_zscore(train, val, test, experiment_id: str, zscore_threshold: float = 2
                 f"{split_name}_predicted_rate":   round(y_pred.mean(), 4),
             })
             results[split_name] = {
-                "y_true": y_true, "y_prob": y_prob_clip, "y_pred": y_pred,
+                "y_true": y_true, "y_prob": y_prob, "y_pred": y_pred,
                 "pr_auc": auc,
             }
             print(f"  [{split_name}] PR-AUC={auc:.4f}  F1-best={f1:.4f}")
 
         # Predictions artifact (test set)
-        pred_df = split_df[["timestamp"]].copy()
+        pred_df = test[["timestamp"]].copy()
         pred_df["y_true"] = results["test"]["y_true"]
         pred_df["y_prob"] = results["test"]["y_prob"]
         pred_df["y_pred"] = results["test"]["y_pred"]
@@ -159,6 +176,8 @@ def run_zscore(train, val, test, experiment_id: str, zscore_threshold: float = 2
 # ---------------------------------------------------------------------------
 
 def run_logistic(train, val, test, experiment_id: str, tau: float = None):
+    if train[TARGET].nunique() < 2:
+        raise ValueError("Training split must contain both classes for logistic regression")
     X_tr, y_tr = train[FEATURE_COLS].values, train[TARGET].values
     X_va, y_va = val[FEATURE_COLS].values,   val[TARGET].values
     X_te, y_te = test[FEATURE_COLS].values,  test[TARGET].values
@@ -177,12 +196,12 @@ def run_logistic(train, val, test, experiment_id: str, tau: float = None):
     ])
     pipe.fit(X_tr, y_tr)
 
-    # Auto-select tau from test set if not manually overridden
-    y_prob_te = pipe.predict_proba(X_te)[:, 1]
-    best_tau, best_f1_te = best_f1_threshold(y_te, y_prob_te)
+    # Auto-select tau from validation set (NOT test) to avoid data leakage
+    y_prob_va = pipe.predict_proba(X_va)[:, 1]
+    best_tau, best_f1_va = best_f1_threshold(y_va, y_prob_va)
     if tau is None:
         tau = best_tau
-        print(f"  Auto-selected tau = {tau:.4f} (test F1 = {best_f1_te:.4f})")
+        print(f"  Auto-selected tau = {tau:.4f} (val F1 = {best_f1_va:.4f})")
     else:
         print(f"  Using manual tau = {tau:.4f} (best-F1 tau would be {best_tau:.4f})")
 
@@ -199,6 +218,7 @@ def run_logistic(train, val, test, experiment_id: str, tau: float = None):
             "n_test":       len(X_te),
         })
 
+        split_metrics = {}
         for split_name, X, y, split_df in [
             ("val",  X_va, y_va, val),
             ("test", X_te, y_te, test),
@@ -216,6 +236,11 @@ def run_logistic(train, val, test, experiment_id: str, tau: float = None):
                 f"{split_name}_spike_rate":    round(y.mean(), 4),
                 f"{split_name}_predicted_rate": round(y_pred.mean(), 4),
             })
+            split_metrics[split_name] = {
+                "pr_auc": round(auc, 4),
+                "f1_at_tau": round(f1_fix, 4),
+                "spike_rate": round(y.mean(), 4),
+            }
             print(f"  [{split_name}] PR-AUC={auc:.4f}  F1@tau={f1_fix:.4f}  F1-best={f1b:.4f}")
 
         # Log model to MLflow
@@ -227,6 +252,25 @@ def run_logistic(train, val, test, experiment_id: str, tau: float = None):
         with open(pkl_path, "wb") as f:
             pickle.dump({"pipeline": pipe, "feature_cols": FEATURE_COLS, "tau": tau}, f)
         mlflow.log_artifact(str(pkl_path), artifact_path="artifacts")
+
+        # Save human-readable metadata alongside the pickle
+        metadata = {
+            "feature_cols":    FEATURE_COLS,
+            "tau":             tau,
+            "train_rows":      len(X_tr),
+            "val_rows":        len(X_va),
+            "test_rows":       len(X_te),
+            "val_pr_auc":      split_metrics["val"]["pr_auc"],
+            "val_f1_at_tau":   split_metrics["val"]["f1_at_tau"],
+            "val_spike_rate":  split_metrics["val"]["spike_rate"],
+            "test_pr_auc":     split_metrics["test"]["pr_auc"],
+            "test_f1_at_tau":  split_metrics["test"]["f1_at_tau"],
+            "test_spike_rate": split_metrics["test"]["spike_rate"],
+        }
+        meta_path = ARTIFACTS / "metadata.json"
+        with open(meta_path, "w") as f:
+            json.dump(metadata, f, indent=2)
+        mlflow.log_artifact(str(meta_path), artifact_path="artifacts")
 
         # Predictions artifact (test set)
         pred_df = test[["timestamp"]].copy()

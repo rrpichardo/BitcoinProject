@@ -1,0 +1,21 @@
+{
+  "feature_cols": [
+    "log_return",
+    "spread_bps",
+    "vol_60s",
+    "mean_return_60s",
+    "trade_intensity_60s",
+    "n_ticks_60s",
+    "spread_mean_60s"
+  ],
+  "tau": 0.6850890104454688,
+  "train_rows": 349273,
+  "val_rows": 116424,
+  "test_rows": 116425,
+  "val_pr_auc": 0.4316,
+  "val_f1_at_tau": 0.4769,
+  "val_spike_rate": 0.1844,
+  "test_pr_auc": 0.1627,
+  "test_f1_at_tau": 0.2374,
+  "test_spike_rate": 0.07
+}

@@ -26,8 +26,15 @@ DEFAULT_OUTPUT = Path("data/processed/predictions.csv")
 
 
 def load_model(path: Path) -> dict:
+    if not path.exists():
+        raise FileNotFoundError(f"Model artifact not found: {path}")
     with open(path, "rb") as f:
-        return pickle.load(f)
+        bundle = pickle.load(f)
+    required = {"pipeline", "feature_cols", "tau"}
+    missing = required - set(bundle)
+    if missing:
+        raise ValueError(f"Model bundle is missing keys: {sorted(missing)}")
+    return bundle
 
 
 def run_inference(features_path: Path, model_path: Path, output_path: Path):
@@ -38,8 +45,15 @@ def run_inference(features_path: Path, model_path: Path, output_path: Path):
     tau          = bundle["tau"]
 
     # Load features
+    if not features_path.exists():
+        raise FileNotFoundError(f"Features parquet not found: {features_path}")
     df = pd.read_parquet(features_path).sort_values("timestamp").reset_index(drop=True)
+    missing = {"timestamp", *feature_cols} - set(df.columns)
+    if missing:
+        raise ValueError(f"Features parquet is missing required columns: {sorted(missing)}")
     df = df.dropna(subset=feature_cols)
+    if df.empty:
+        raise ValueError(f"No rows remain after dropping null feature rows from {features_path}")
 
     X = df[feature_cols].values
 

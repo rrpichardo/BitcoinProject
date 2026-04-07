@@ -17,6 +17,7 @@ Usage:
 
 import argparse
 import json
+import re
 import signal
 import sys
 import time
@@ -71,7 +72,9 @@ def validate(msg: dict) -> list[str]:
             errors.append(f"crossed book: bid={bid} > ask={ask}")
 
     try:
-        datetime.fromisoformat(msg["timestamp"].replace("Z", "+00:00"))
+        # Truncate nanosecond precision to microseconds before parsing
+        ts_clean = re.sub(r"(\.\d{6})\d+", r"\1", msg["timestamp"])
+        datetime.fromisoformat(ts_clean.replace("Z", "+00:00"))
     except (ValueError, AttributeError):
         errors.append(f"unparseable timestamp: {msg['timestamp']!r}")
 
@@ -125,6 +128,21 @@ class Stats:
         return "\n".join(lines)
 
 
+def wait_for_kafka(consumer: Consumer, bootstrap: str, timeout: float) -> None:
+    deadline = time.monotonic() + timeout
+    last_exc: Exception | None = None
+    while time.monotonic() < deadline:
+        try:
+            consumer.list_topics(timeout=1.0)
+            return
+        except Exception as exc:  # pragma: no cover - exercised in integration
+            last_exc = exc
+            time.sleep(1.0)
+    raise RuntimeError(
+        f"Kafka bootstrap {bootstrap!r} was not reachable within {timeout:.0f}s"
+    ) from last_exc
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -142,6 +160,8 @@ def main():
                         help="Exit with code 1 if error rate exceeds this (default: 0.05)")
     parser.add_argument("--from-beginning", action="store_true",
                         help="Start consuming from the earliest offset")
+    parser.add_argument("--startup-timeout", type=float, default=10.0,
+                        help="Seconds to wait for Kafka before failing (default: 10)")
     args = parser.parse_args()
 
     # Use a throwaway group ID when replaying from beginning so committed
@@ -155,6 +175,12 @@ def main():
         "enable.auto.commit": True,
     })
     consumer.subscribe([args.topic])
+    try:
+        wait_for_kafka(consumer, args.bootstrap_servers, args.startup_timeout)
+    except RuntimeError as exc:
+        print(f"[FAIL] {exc}", file=sys.stderr)
+        consumer.close()
+        sys.exit(1)
 
     stats = Stats()
     stop = False

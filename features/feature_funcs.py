@@ -87,13 +87,14 @@ def compute_rolling_stats(buffer: deque, window_sec: float) -> dict[str, float]:
         "vol":         float,   # std of log-returns (0.0 if < 2 prices)
         "mean_return": float,   # mean log-return
         "n_ticks":     int,     # number of ticks in window
+        "price_range": float,   # max(price) - min(price) in window
     }
     """
     window = _window_slice(buffer, window_sec)
     n = len(window)
 
     if n < 2:
-        return {"vol": 0.0, "mean_return": 0.0, "n_ticks": n}
+        return {"vol": 0.0, "mean_return": 0.0, "n_ticks": n, "price_range": 0.0}
 
     returns = [
         compute_return(window[i]["price"], window[i - 1]["price"])
@@ -103,11 +104,26 @@ def compute_rolling_stats(buffer: deque, window_sec: float) -> dict[str, float]:
     mean_r = sum(returns) / len(returns)
     variance = sum((r - mean_r) ** 2 for r in returns) / len(returns)
 
+    prices = [e["price"] for e in window]
     return {
         "vol": math.sqrt(variance),
         "mean_return": mean_r,
         "n_ticks": n,
+        "price_range": max(prices) - min(prices),
     }
+
+
+def compute_spread_mean(buffer: deque, window_sec: float) -> float:
+    """
+    Mean absolute spread over the last `window_sec`.
+
+    Requires buffer entries with keys: {"spread_abs": float, "ts": float}.
+    Returns 0.0 when the window is empty.
+    """
+    window = _window_slice(buffer, window_sec)
+    if not window:
+        return 0.0
+    return sum(e["spread_abs"] for e in window) / len(window)
 
 
 def compute_trade_intensity(timestamps: Sequence[float], window_sec: float) -> float:
