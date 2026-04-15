@@ -1,0 +1,6 @@
+# Minimal deps for the FastAPI prediction service container
+fastapi>=0.110
+uvicorn>=0.29
+scikit-learn>=1.4
+numpy
+prometheus-client>=0.20
