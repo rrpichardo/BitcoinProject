@@ -88,5 +88,32 @@ services:
           memory: 1G
           cpus: "1.0"
 
+  # FastAPI prediction service (Week 4 thin slice) — serves /health, /predict, /version, /metrics
+  api:
+    build:
+      # Build context is the repo root so the Dockerfile can COPY api/ and models/artifacts/
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    container_name: api
+    ports:
+      # Host 8000 -> container 8000 (uvicorn)
+      - "8000:8000"
+    environment:
+      MODEL_PATH: models/artifacts/lr_pipeline.pkl
+      MODEL_VERSION: v1.0
+    # Cap resource usage to keep the stack friendly on laptops
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+    healthcheck:
+      # Hit /health from inside the container so compose knows when API is ready
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: on-failure
+
 volumes:
   kafka-data:

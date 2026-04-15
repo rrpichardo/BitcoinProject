@@ -300,6 +300,13 @@ def main():
         help="Output Parquet path (default: data.features_file from config)",
     )
     parser.add_argument("--config", default="config.yaml")
+    # Optional wall-clock cap: stop after N minutes of tick-timestamp elapsed
+    parser.add_argument(
+        "--minutes",
+        type=float,
+        default=None,
+        help="Only replay the first N minutes of ticks (by tick timestamp). Default: no cap.",
+    )
     args = parser.parse_args()
 
     cfg           = load_config(args.config)
@@ -313,7 +320,22 @@ def main():
     emitted = 0
     pending_count = 0
 
+    # Convert --minutes to a wall-clock cut-off in seconds; None means no cap
+    max_seconds = args.minutes * 60.0 if args.minutes else None
+    # Anchor is set from the first tick's timestamp so the cap is relative, not absolute
+    t_anchor: float | None = None
+
     for _ts, tick in iter_ticks(args.raw):
+        # Establish the replay start time from the very first tick we see
+        if t_anchor is None:
+            t_anchor = _ts
+        # Stop once we've walked past the --minutes window in tick time
+        if max_seconds is not None and (_ts - t_anchor) > max_seconds:
+            log.info(
+                "Reached --minutes=%.2f cap at tick ts offset %.1fs; stopping.",
+                args.minutes, _ts - t_anchor,
+            )
+            break
         pid = tick.get("product_id", "unknown")
         if pid not in states:
             states[pid] = ProductState(window_sec, horizon_sec, vol_threshold)
