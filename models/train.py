@@ -24,10 +24,15 @@ import argparse
 import hashlib
 import json
 import logging
+import os
 import pickle
 import sys
 import warnings
 from pathlib import Path
+
+# MLflow 3.x can trip over protobuf 6.x in some local environments unless
+# the pure-Python protobuf implementation is selected before mlflow imports it.
+os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
 
 import mlflow
 import mlflow.sklearn
@@ -35,6 +40,7 @@ import numpy as np
 import pandas as pd
 import scipy.special
 import yaml
+from mlflow.exceptions import MlflowException
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     average_precision_score,
@@ -48,6 +54,7 @@ from sklearn.exceptions import ConvergenceWarning
 # Surface convergence issues as logged warnings instead of silencing them
 logging.captureWarnings(True)
 warnings.filterwarnings("default", category=ConvergenceWarning)
+log = logging.getLogger(__name__)
 
 ROOT      = Path(__file__).parent.parent
 ARTIFACTS = ROOT / "models" / "artifacts"
@@ -247,9 +254,6 @@ def run_logistic(train, val, test, experiment_id: str, tau: float = None):
             }
             print(f"  [{split_name}] PR-AUC={auc:.4f}  F1@tau={f1_fix:.4f}  F1-best={f1b:.4f}")
 
-        # Log model to MLflow
-        mlflow.sklearn.log_model(pipe, artifact_path="model")
-
         # Save pickle to models/artifacts/ with SHA-256 checksum for integrity verification
         ARTIFACTS.mkdir(parents=True, exist_ok=True)
         pkl_path = ARTIFACTS / "lr_pipeline.pkl"
@@ -292,6 +296,15 @@ def run_logistic(train, val, test, experiment_id: str, tau: float = None):
         tmp = ARTIFACTS / "lr_predictions.csv"
         pred_df.to_csv(tmp, index=False)
         mlflow.log_artifact(str(tmp), artifact_path="predictions")
+
+        # Newer MLflow Python clients can call endpoints that older tracking
+        # servers do not expose. Keep training successful by treating server
+        # model logging as best-effort; the portable pickle artifact above is
+        # still the source of truth used by infer.py and the FastAPI service.
+        try:
+            mlflow.sklearn.log_model(pipe, artifact_path="model")
+        except MlflowException as exc:
+            log.warning("Skipping MLflow model log because the tracking server is incompatible: %s", exc)
 
         print(f"  Model saved → {pkl_path}")
         print(f"  MLflow run_id: {run.info.run_id}")

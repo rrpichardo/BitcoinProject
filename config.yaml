@@ -28,8 +28,8 @@ model:
   scale_pos_weight: 5       # class imbalance weight
 
 mlflow:
-  tracking_uri: "sqlite:///mlruns/mlflow_ui.db"
-  experiment_name: btc-volatility
+  tracking_uri: "http://localhost:5001"
+  experiment_name: btc-volatility-served
 
 evidently:
   report_dir: reports/evidently

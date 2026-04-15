@@ -14,8 +14,12 @@ Usage
 
 import argparse
 import json
+import os
 import warnings
 from pathlib import Path
+
+# Keep MLflow compatible with protobuf 6.x in the local grading environment.
+os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
 
 import mlflow
 import numpy as np
