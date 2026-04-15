@@ -18,7 +18,7 @@ The following later-week items are not documented here as completed yet:
 ## Setup
 
 ```bash
-docker compose up -d kafka mlflow api kafka-init
+docker compose up -d
 python features/featurizer.py --topic_in ticks.raw --topic_out ticks.features --output_parquet data/processed/features_live.parquet
 python scripts/kafka_consume_check.py --topic ticks.raw --min 100
 python scripts/ws_ingest.py --pair BTC-USD --minutes 15
@@ -29,6 +29,7 @@ curl -X POST http://localhost:8000/predict -H 'Content-Type: application/json' -
 ```
 
 If the validator starts after ingest has already begun, use `python scripts/kafka_consume_check.py --topic ticks.raw --min 100 --from-beginning`.
+Copy `.env.example` to `.env` only if you need local overrides.
 
 ## Docs
 

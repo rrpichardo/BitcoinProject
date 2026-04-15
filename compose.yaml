@@ -1,9 +1,0 @@
-# Canonical compose file lives in docker/compose.yaml
-# This wrapper allows `docker compose up` from the project root.
-#
-# Usage:
-#   docker compose -f docker/compose.yaml up
-#
-# Or from this file (which just includes the canonical one):
-include:
-  - docker/compose.yaml

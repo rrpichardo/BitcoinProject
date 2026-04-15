@@ -27,7 +27,7 @@ Use live streaming as the primary operating mode. Use replay for deterministic v
 1. Start infrastructure and the API:
 
 ```bash
-docker compose up -d kafka mlflow api kafka-init
+docker compose up -d
 docker compose ps
 ```
 
@@ -90,7 +90,7 @@ curl -X POST http://localhost:8000/predict \
 If live ingest is unavailable or you need a deterministic verification path, use replay mode:
 
 ```bash
-docker compose up -d kafka mlflow api kafka-init
+docker compose up -d
 python scripts/replay.py --raw data/raw/20260404.ndjson --out data/processed/features_10min.parquet --minutes 10
 python models/infer.py --features data/processed/features_10min.parquet --batch
 ```
@@ -107,12 +107,12 @@ python scripts/kafka_consume_check.py --topic ticks.raw --min 100 --from-beginni
 
 ### Duplicate ingest
 
-- Do not run bare `docker compose up -d` and `python scripts/ws_ingest.py` at the same time for local live testing.
-- This repo includes an `ingestor` service in Compose.
-- For local live runs, prefer:
+- Plain `docker compose up -d` is safe for the assignment flow.
+- The containerized `ingestor` service is now opt-in via the `live-ingest` profile, so it does not start by default.
+- If you intentionally want the containerized ingestor instead of the local script, use:
 
 ```bash
-docker compose up -d kafka mlflow api kafka-init
+docker compose --profile live-ingest up -d
 ```
 
 ### MLflow training issues
@@ -143,7 +143,7 @@ docker compose up -d kafka mlflow api kafka-init
 
 ```bash
 docker compose down
-docker compose up -d kafka mlflow api kafka-init
+docker compose up -d
 ```
 
 ### Rebuild training data from raw capture

@@ -32,6 +32,7 @@ import os
 import re
 import signal
 import time
+import uuid
 from collections import deque
 from datetime import datetime
 from pathlib import Path
@@ -253,6 +254,10 @@ def main():
     parser.add_argument("--topic_in",       default=None, help="Override ticks.raw topic")
     parser.add_argument("--topic_out",      default=None, help="Override ticks.features topic")
     parser.add_argument("--output_parquet", default=None, help="Override Parquet output path")
+    parser.add_argument("--group-id",       default=None,
+                        help="Kafka consumer group id. Default creates a throwaway rerunnable group.")
+    parser.add_argument("--latest",         action="store_true",
+                        help="Only consume new ticks arriving after startup.")
     parser.add_argument("--startup-timeout", type=float, default=10.0,
                         help="Seconds to wait for Kafka before failing (default: 10)")
     args = parser.parse_args()
@@ -262,7 +267,7 @@ def main():
     bootstrap     = os.getenv("KAFKA_BOOTSTRAP", cfg["kafka"]["bootstrap_servers"])
     topic_in      = args.topic_in      or cfg["kafka"]["topic_raw"]
     topic_out     = args.topic_out     or cfg["kafka"]["topic_features"]
-    group_id      = cfg["kafka"]["group_id"]
+    group_id      = args.group_id or f"{cfg['kafka']['group_id']}-{uuid.uuid4().hex[:8]}"
     window_sec    = float(cfg["features"]["window_seconds"])
     horizon_sec   = float(cfg["features"]["label_horizon_sec"])
     vol_threshold = float(cfg["features"]["vol_threshold"])
@@ -271,7 +276,7 @@ def main():
     consumer = Consumer({
         "bootstrap.servers": bootstrap,
         "group.id":          group_id,
-        "auto.offset.reset": "earliest",
+        "auto.offset.reset": "latest" if args.latest else "earliest",
         "enable.auto.commit": True,
     })
     consumer.subscribe([topic_in])
@@ -291,8 +296,9 @@ def main():
     signal.signal(signal.SIGTERM, _shutdown)
 
     log.info(
-        "Featurizer started | %s → %s | parquet=%s | window=%.0fs horizon=%.0fs",
-        topic_in, topic_out, parquet_path, window_sec, horizon_sec,
+        "Featurizer started | %s → %s | parquet=%s | group=%s | offset=%s | window=%.0fs horizon=%.0fs",
+        topic_in, topic_out, parquet_path, group_id,
+        "latest" if args.latest else "earliest", window_sec, horizon_sec,
     )
 
     while not stop:

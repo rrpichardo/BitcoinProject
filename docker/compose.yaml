@@ -53,6 +53,8 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.ingestor
     container_name: ingestor
+    profiles:
+      - live-ingest
     depends_on:
       kafka:
         condition: service_healthy

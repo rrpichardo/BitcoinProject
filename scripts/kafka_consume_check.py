@@ -167,19 +167,27 @@ def main():
     parser.add_argument("--max-error-rate", type=float, default=0.05,
                         help="Exit with code 1 if error rate exceeds this (default: 0.05)")
     parser.add_argument("--from-beginning", action="store_true",
-                        help="Start consuming from the earliest offset")
+                        help="Start consuming from the earliest offset (default behavior)")
+    parser.add_argument("--latest", action="store_true",
+                        help="Only consume new messages arriving after startup")
     parser.add_argument("--startup-timeout", type=float, default=10.0,
                         help="Seconds to wait for Kafka before failing (default: 10)")
     args = parser.parse_args()
 
-    # Use a throwaway group ID when replaying from beginning so committed
-    # offsets from a previous run don't shadow the earliest reset.
-    group_id = f"{args.group_id}-{uuid.uuid4().hex[:8]}" if args.from_beginning else args.group_id
+    if args.from_beginning and args.latest:
+        print("[FAIL] choose either --from-beginning or --latest, not both", file=sys.stderr)
+        sys.exit(1)
+
+    # The assignment examples run validation after ingest, so the safe default
+    # is to read from the earliest available offset with a throwaway consumer
+    # group. This avoids stale committed offsets from prior runs.
+    read_from_beginning = not args.latest
+    group_id = f"{args.group_id}-{uuid.uuid4().hex[:8]}" if read_from_beginning else args.group_id
 
     consumer = Consumer({
         "bootstrap.servers": args.bootstrap_servers,
         "group.id": group_id,
-        "auto.offset.reset": "earliest" if args.from_beginning else "latest",
+        "auto.offset.reset": "earliest" if read_from_beginning else "latest",
         "enable.auto.commit": True,
     })
     consumer.subscribe([args.topic])
