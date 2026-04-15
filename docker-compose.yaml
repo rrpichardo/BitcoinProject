@@ -1,0 +1,5 @@
+# Canonical compose file lives in docker/compose.yaml.
+# This compatibility wrapper matches the assignment's requested filename and
+# allows `docker compose -f docker-compose.yaml up -d` from the project root.
+include:
+  - docker/compose.yaml

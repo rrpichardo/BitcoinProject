@@ -1,15 +1,13 @@
 """Smoke tests for the FastAPI prediction service.
 
-Run after `docker compose -f docker/compose.yaml up -d api` (or uvicorn locally):
-
-    python tests/test_api.py
+These tests run the app in-process via FastAPI's TestClient, so they verify
+the actual endpoint behavior without depending on Docker or an open localhost
+port in the execution environment.
 """
 
-# Requests is the simplest way to hit the running container from the host
-import requests
+from fastapi.testclient import TestClient
 
-# Assume API is reachable on the docker-compose published port
-BASE_URL = "http://localhost:8000"
+from api.main import app
 
 # A plausible single-row feature payload matching the trained feature order
 SAMPLE_ROW = {
@@ -22,17 +20,19 @@ SAMPLE_ROW = {
     "spread_mean_60s": 1.2,
 }
 
+client = TestClient(app)
+
 
 def test_health():
     # /health should return 200 with a fixed ok payload
-    r = requests.get(f"{BASE_URL}/health")
+    r = client.get("/health")
     assert r.status_code == 200
     assert r.json() == {"status": "ok"}
 
 
 def test_version():
     # /version exposes model identity + threshold + feature list
-    r = requests.get(f"{BASE_URL}/version")
+    r = client.get("/version")
     assert r.status_code == 200
     body = r.json()
     assert "model" in body
@@ -43,7 +43,7 @@ def test_version():
 
 def test_predict_single():
     # Single-row prediction should return a probability in [0, 1]
-    r = requests.post(f"{BASE_URL}/predict", json={"rows": [SAMPLE_ROW]})
+    r = client.post("/predict", json={"rows": [SAMPLE_ROW]})
     assert r.status_code == 200
     body = r.json()
     assert len(body["scores"]) == 1
@@ -53,7 +53,7 @@ def test_predict_single():
 
 def test_predict_batch():
     # Batch of 5 rows should produce 5 scores
-    r = requests.post(f"{BASE_URL}/predict", json={"rows": [SAMPLE_ROW] * 5})
+    r = client.post("/predict", json={"rows": [SAMPLE_ROW] * 5})
     assert r.status_code == 200
     assert len(r.json()["scores"]) == 5
 
@@ -61,13 +61,14 @@ def test_predict_batch():
 def test_predict_missing_field():
     # Missing required features should fail Pydantic validation with a 422
     bad_row = {"log_return": 0.0001}
-    r = requests.post(f"{BASE_URL}/predict", json={"rows": [bad_row]})
+    r = client.post("/predict", json={"rows": [bad_row]})
     assert r.status_code == 422
 
 
 def test_metrics():
     # /metrics must expose the prometheus counter so scrapers can ingest it
-    r = requests.get(f"{BASE_URL}/metrics")
+    client.post("/predict", json={"rows": [SAMPLE_ROW]})
+    r = client.get("/metrics")
     assert r.status_code == 200
     assert "predict_requests_total" in r.text
 
